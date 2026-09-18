@@ -1,0 +1,165 @@
+{
+  "name": "n8n Workflow Popularity — Forum Collector",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "https://community.n8n.io/latest.json",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        16
+      ],
+      "id": "bccbda7f-9227-4936-90f2-372f8426c45a",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst topics = input.topic_list?.topics || [];\n\nconst results = [];\n\nfor (const topic of topics) {\n  const title = String(topic.title || \"\");\n  const text = title.toLowerCase();\n\n  const isWorkflowRelated =\n    text.includes(\"workflow\") ||\n    text.includes(\"automation\") ||\n    text.includes(\"ai agent\") ||\n    text.includes(\"agent\") ||\n    text.includes(\"gmail\") ||\n    text.includes(\"whatsapp\") ||\n    text.includes(\"google sheets\") ||\n    text.includes(\"slack\") ||\n    text.includes(\"crm\") ||\n    text.includes(\"rag\") ||\n    text.includes(\"api\");\n\n  if (!isWorkflowRelated) {\n    continue;\n  }\n\n  results.push({\n    json: {\n      forum_topic_id: topic.id,\n\n      title: topic.title || null,\n\n      slug: topic.slug || null,\n\n      url: topic.slug\n        ? `https://community.n8n.io/t/${topic.slug}/${topic.id}`\n        : null,\n\n      views: Number(topic.views || 0),\n\n      replies: Number(\n        topic.reply_count ||\n        topic.posts_count ||\n        0\n      ),\n\n      likes: Number(\n        topic.like_count ||\n        0\n      ),\n\n      created_at: topic.created_at || null,\n\n      last_posted_at: topic.last_posted_at || null,\n\n      source_platform: \"n8n_forum\",\n\n      collected_at: new Date().toISOString()\n    }\n  });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        16
+      ],
+      "id": "7e2492b3-c93c-46e0-b19d-84ea7998cb8e",
+      "name": "Filter Forum  Workflows"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nif (items.length === 0) {\n  return [];\n}\n\nconst maxViews = Math.max(\n  ...items.map(item => Math.log1p(Number(item.json.views || 0)))\n);\n\nconst maxReplies = Math.max(\n  ...items.map(item => Number(item.json.replies || 0))\n);\n\nconst maxLikes = Math.max(\n  ...items.map(item => Number(item.json.likes || 0))\n);\n\nreturn items.map(item => {\n  const data = item.json;\n\n  const views = Number(data.views || 0);\n  const replies = Number(data.replies || 0);\n  const likes = Number(data.likes || 0);\n\n  const viewsScore =\n    maxViews > 0\n      ? (Math.log1p(views) / maxViews) * 100\n      : 0;\n\n  const repliesScore =\n    maxReplies > 0\n      ? (replies / maxReplies) * 100\n      : 0;\n\n  const likesScore =\n    maxLikes > 0\n      ? (likes / maxLikes) * 100\n      : 0;\n\n  const popularityScore =\n    (viewsScore * 0.50) +\n    (repliesScore * 0.30) +\n    (likesScore * 0.20);\n\n  return {\n    json: {\n      ...data,\n\n      views_score: Number(viewsScore.toFixed(2)),\n      replies_score: Number(repliesScore.toFixed(2)),\n      likes_score: Number(likesScore.toFixed(2)),\n\n      popularity_score: Number(popularityScore.toFixed(2)),\n\n      scoring_method:\n        \"50% log-normalized views + 30% replies + 20% likes\"\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        32
+      ],
+      "id": "d708dec3-be4d-4c20-a59f-e76f70f6d986",
+      "name": "Calculate Forum Popularity Score"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 14
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "38a6ad87-9b04-41c5-9fce-66209cb57e61",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nreturn [\n  {\n    json: {\n      source: \"forum\",\n      records: items.map(item => item.json)\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        32
+      ],
+      "id": "4f519ecd-f165-4c43-95f4-ba0974a8ea9d",
+      "name": "Export Forum JSON"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/workflows/bulk",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([{\n  forum_topic_id: $json.forum_topic_id,\n  title: $json.title,\n  source_platform: \"n8n_forum\",\n  source_url: $json.url,\n  country: \"unknown\",\n  views: $json.views,\n  likes: $json.likes,\n  replies: $json.replies,\n  popularity_score: $json.popularity_score,\n  collected_at: $json.collected_at\n}]) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1088,
+        32
+      ],
+      "id": "a4e79863-0ac5-4144-ab4f-8a2720cf2d88",
+      "name": "HTTP Request1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Filter Forum  Workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Forum  Workflows": {
+      "main": [
+        [
+          {
+            "node": "Calculate Forum Popularity Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Forum Popularity Score": {
+      "main": [
+        [
+          {
+            "node": "Export Forum JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Export Forum JSON": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "5a83bc1a-6551-4099-8465-c9d9327b3230",
+  "meta": {
+    "instanceId": "59f8ff0744b2ebbe1aaaebc0c009dc432dcb4669b505244ea466e81eb77843a5"
+  },
+  "nodeGroups": [],
+  "id": "SjyB2uvy7W1Q8JS3",
+  "tags": []
+}

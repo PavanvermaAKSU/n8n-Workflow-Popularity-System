@@ -1,0 +1,426 @@
+{
+  "name": "n8n Workflow Popularity — YouTube Collector",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 14
+            }
+          ]
+        }
+      },
+      "id": "46516498-6db0-4133-8e5e-77942887a736",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -48,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const keywords = [\n  \"n8n workflow\",\n  \"n8n automation\",\n  \"n8n AI agent\",\n  \"n8n Gmail automation\",\n  \"n8n WhatsApp automation\",\n  \"n8n Google Sheets automation\",\n  \"n8n Slack automation\",\n  \"n8n CRM automation\"\n];\n\nreturn keywords.map(keyword => ({\n  json: {\n    keyword\n  }\n}));"
+      },
+      "id": "4df63bda-d593-4500-b824-5b9d3cdd6777",
+      "name": "YouTube Keywords",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/youtube/v3/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "part",
+              "value": "snippet"
+            },
+            {
+              "name": "q",
+              "value": "={{ $json.keyword }}"
+            },
+            {
+              "name": "type",
+              "value": "video"
+            },
+            {
+              "name": "maxResults",
+              "value": "50"
+            },
+            {
+              "name": "key",
+              "value": "Put your YT API v3"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "626e3a56-e6b0-45dc-9646-9f1a8cef47cf",
+      "name": "YT Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputs = $input.all();\n\nconst uniqueVideos = new Map();\n\nfor (const input of inputs) {\n  const results = input.json.items || [];\n\n  for (const video of results) {\n    const videoId = video.id?.videoId;\n\n    if (!videoId) continue;\n\n    if (!uniqueVideos.has(videoId)) {\n      uniqueVideos.set(videoId, video);\n    }\n  }\n}\n\nreturn Array.from(uniqueVideos.values()).map(video => ({\n  json: {\n    video_id: video.id.videoId,\n    title: video.snippet?.title || null,\n    description: video.snippet?.description || null,\n    channel_id: video.snippet?.channelId || null,\n    channel_title: video.snippet?.channelTitle || null,\n    published_at: video.snippet?.publishedAt || null,\n    thumbnail:\n      video.snippet?.thumbnails?.high?.url ||\n      video.snippet?.thumbnails?.default?.url ||\n      null,\n    source_platform: \"youtube\"\n  }\n}));"
+      },
+      "id": "dfa4ac14-dff2-4171-a3ab-3af59e598a7c",
+      "name": "Flatten & Deduplicate YouTube Search Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst videoIds = items\n  .map(item => item.json.video_id)\n  .filter(Boolean);\n\nconst batches = [];\n\nfor (let i = 0; i < videoIds.length; i += 50) {\n  const batch = videoIds.slice(i, i + 50);\n\n  batches.push({\n    json: {\n      videoIds: batch\n    }\n  });\n}\n\nreturn batches;"
+      },
+      "id": "c636bf93-539d-4adc-b65a-0c3bea1bf77b",
+      "name": "Prepare Statistics Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/youtube/v3/videos",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "part",
+              "value": "snippet, statistics"
+            },
+            {
+              "name": "id",
+              "value": "={{ $json.videoIds.join(',') }}"
+            },
+            {
+              "name": "key",
+              "value": "Put your YT API v3"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2d6dc9a6-9614-40f5-b725-a3e9caea4c84",
+      "name": "YT - Statistics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1232,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const statisticsInput = $input.all();\nconst searchItems = $('YT Search').all();\n\n// 1. Build lookup map from YT Search node\nconst searchMap = new Map();\nfor (const item of searchItems) {\n  // Handles both raw API output (items array) and flattened outputs\n  const rawResults = item.json.items || item.json;\n  const list = Array.isArray(rawResults) ? rawResults : [rawResults];\n  \n  for (const video of list) {\n    // Extracts videoId whether nested (id.videoId) or flat (id)\n    const videoId = typeof video.id === 'object' ? video.id?.videoId : video.id;\n    if (videoId) {\n      searchMap.set(videoId, video);\n    }\n  }\n}\n\n// 2. Process statistics items\nconst output = [];\nfor (const item of statisticsInput) {\n  // Extracts items array from YT - Statistics response\n  const statsList = item.json.items || (Array.isArray(item.json) ? item.json : [item.json]);\n\n  for (const videoStats of statsList) {\n    const videoId = typeof videoStats.id === 'object' ? videoStats.id?.videoId : videoStats.id;\n    if (!videoId) continue;\n\n    const searchData = searchMap.get(videoId);\n    const stats = videoStats.statistics || {};\n\n    output.push({\n      json: {\n        video_id: videoId,\n        title: searchData?.snippet?.title || searchData?.title || null,\n        description: searchData?.snippet?.description || searchData?.description || null,\n        channel_id: searchData?.snippet?.channelId || searchData?.channelId || null,\n        channel_title: searchData?.snippet?.channelTitle || searchData?.channelTitle || null,\n        published_at: searchData?.snippet?.publishedAt || searchData?.publishedAt || null,\n        thumbnail: searchData?.snippet?.thumbnails?.high?.url || searchData?.snippet?.thumbnails?.default?.url || searchData?.thumbnail || null,\n        views: Number(stats.viewCount || 0),\n        likes: Number(stats.likeCount || 0),\n        comments: Number(stats.commentCount || 0),\n        source_platform: \"youtube\",\n        source_url: `https://www.youtube.com/watch?v=${videoId}`,\n        collected_at: new Date().toISOString()\n      }\n    });\n  }\n}\n\nreturn output;"
+      },
+      "id": "1d12a9ca-6297-40cb-8f09-c3915fbe91b9",
+      "name": "Normalize YouTube Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst validItems = [];\n\nfor (const item of items) {\n  const data = item.json;\n\n  const title = String(data.title || \"\").toLowerCase();\n  const description = String(data.description || \"\").toLowerCase();\n\n  const text = `${title} ${description}`;\n\n  // Relevance check\n  const isN8nRelated = text.includes(\"n8n\");\n\n  const isWorkflowRelated =\n    text.includes(\"workflow\") ||\n    text.includes(\"automation\");\n\n  // Numeric validation\n  const views = Number(data.views);\n  const likes = Number(data.likes);\n  const comments = Number(data.comments);\n\n  const validMetrics =\n    Number.isFinite(views) &&\n    Number.isFinite(likes) &&\n    Number.isFinite(comments) &&\n    views >= 0 &&\n    likes >= 0 &&\n    comments >= 0;\n\n  if (!isN8nRelated || !isWorkflowRelated || !validMetrics) {\n    continue;\n  }\n\n  // Engagement metrics\n  const likeToViewRatio =\n    views > 0 ? likes / views : 0;\n\n  const commentToViewRatio =\n    views > 0 ? comments / views : 0;\n\n  validItems.push({\n    json: {\n      ...data,\n\n      like_to_view_ratio: likeToViewRatio,\n      comment_to_view_ratio: commentToViewRatio,\n\n      validation_status: \"valid\"\n    }\n  });\n}\n\nreturn validItems;"
+      },
+      "id": "17f9baec-580d-4df1-83af-e1b97d89aac4",
+      "name": "Validate & Calculate YouTube Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nif (items.length === 0) {\n  return [];\n}\n\n// Find maximum values for normalization\nconst maxViews = Math.max(\n  ...items.map(item => Math.log1p(Number(item.json.views || 0)))\n);\n\nconst maxLikeRate = Math.max(\n  ...items.map(item => Number(item.json.like_to_view_ratio || 0))\n);\n\nconst maxCommentRate = Math.max(\n  ...items.map(item => Number(item.json.comment_to_view_ratio || 0))\n);\n\nreturn items.map(item => {\n  const data = item.json;\n\n  const views = Number(data.views || 0);\n  const likeRate = Number(data.like_to_view_ratio || 0);\n  const commentRate = Number(data.comment_to_view_ratio || 0);\n\n  // Log scale prevents very high-view videos from dominating everything\n  const viewsScore =\n    maxViews > 0\n      ? (Math.log1p(views) / maxViews) * 100\n      : 0;\n\n  const likeRateScore =\n    maxLikeRate > 0\n      ? (likeRate / maxLikeRate) * 100\n      : 0;\n\n  const commentRateScore =\n    maxCommentRate > 0\n      ? (commentRate / maxCommentRate) * 100\n      : 0;\n\n  // Documented weights\n  const popularityScore =\n    (viewsScore * 0.50) +\n    (likeRateScore * 0.30) +\n    (commentRateScore * 0.20);\n\n  return {\n    json: {\n      ...data,\n\n      views_score: Number(viewsScore.toFixed(2)),\n      like_rate_score: Number(likeRateScore.toFixed(2)),\n      comment_rate_score: Number(commentRateScore.toFixed(2)),\n\n      popularity_score: Number(popularityScore.toFixed(2)),\n\n      scoring_method:\n        \"50% log-normalized views + 30% like/view ratio + 20% comment/view ratio\"\n    }\n  };\n});"
+      },
+      "id": "59cbac90-4d82-47b3-92b2-0ac3c98ddeaf",
+      "name": "Calculate YouTube Popularity Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nreturn items\n  .sort(\n    (a, b) =>\n      Number(b.json.popularity_score || 0) -\n      Number(a.json.popularity_score || 0)\n  )\n  .map((item, index) => ({\n    json: {\n      rank: index + 1,\n      ...item.json,\n\n      country_segment: \"unknown\",\n      data_type: \"youtube_workflow\"\n    }\n  }));"
+      },
+      "id": "0bc1ee38-7e31-4640-88b8-e344e495f5b3",
+      "name": "Prepare Final YouTube Dataset",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/workflows/bulk",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([{ video_id: $json.video_id, title: $json.title, description: $json.description, source_platform: \"youtube\", source_url: $json.source_url, country_segment: $json.country_segment, views: $json.views, likes: $json.likes, comments: $json.comments, like_to_view_ratio: $json.like_to_view_ratio, comment_to_view_ratio: $json.comment_to_view_ratio, popularity_score: $json.popularity_score, collected_at: $json.collected_at }]) }}",
+        "options": {}
+      },
+      "id": "350bf951-6120-4cba-adcc-72e816529fa3",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2464,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all()\nreturn [\n  {\n    json: {\n      source: \"youtube\",\n      records: items.map(item => item.json)\n    }\n  }\n];"
+      },
+      "id": "6fd09ccb-fa26-43eb-a0c6-947e67267605",
+      "name": "Export YouTube JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        80
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst validItems = [];\n\nfor (const item of items) {\n  const data = item.json;\n\n  const title = String(data.title || \"\").toLowerCase();\n  const description = String(data.description || \"\").toLowerCase();\n\n  const text = `${title} ${description}`;\n\n  // Must be related to n8n\n  const isN8nRelated = text.includes(\"n8n\");\n\n  // Should discuss workflows or automation\n  const isWorkflowRelated =\n    text.includes(\"workflow\") ||\n    text.includes(\"automation\");\n\n  // Basic metric validation\n  const hasValidViews =\n    Number.isFinite(Number(data.views)) &&\n    Number(data.views) >= 0;\n\n  const hasValidLikes =\n    Number.isFinite(Number(data.likes)) &&\n    Number(data.likes) >= 0;\n\n  const hasValidComments =\n    Number.isFinite(Number(data.comments)) &&\n    Number(data.comments) >= 0;\n\n  if (\n    isN8nRelated &&\n    isWorkflowRelated &&\n    hasValidViews &&\n    hasValidLikes &&\n    hasValidComments\n  ) {\n    validItems.push({\n      json: data\n    });\n  }\n}\n\nreturn validItems;"
+      },
+      "id": "4e04d448-05e5-4646-90f7-ffa8cf76763f",
+      "name": "Validate & Filter YouTube Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nreturn items.map(item => {\n  const data = item.json;\n\n  const views = Number(data.views || 0);\n  const likes = Number(data.likes || 0);\n  const comments = Number(data.comments || 0);\n\n  const likeToViewRatio =\n    views > 0 ? likes / views : 0;\n\n  const commentToViewRatio =\n    views > 0 ? comments / views : 0;\n\n  return {\n    json: {\n      ...data,\n\n      like_to_view_ratio: likeToViewRatio,\n      comment_to_view_ratio: commentToViewRatio\n    }\n  };\n});"
+      },
+      "id": "ff80ecf0-3341-4f35-8c3c-cb02e7dff669",
+      "name": "Calculate Engagement Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst seen = new Set();\nconst uniqueItems = [];\n\nfor (const item of items) {\n  const data = item.json;\n\n  const key = `${data.source_platform}:${data.video_id}`;\n\n  if (!seen.has(key)) {\n    seen.add(key);\n    uniqueItems.push(item);\n  }\n}\n\nreturn uniqueItems;"
+      },
+      "id": "a08e23d7-95cf-4695-b8b0-e3503493d2cd",
+      "name": "Deduplicate YouTube Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3328,
+        48
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "YouTube Keywords",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube Keywords": {
+      "main": [
+        [
+          {
+            "node": "YT Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YT Search": {
+      "main": [
+        [
+          {
+            "node": "Flatten & Deduplicate YouTube Search Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten & Deduplicate YouTube Search Results": {
+      "main": [
+        [
+          {
+            "node": "Prepare Statistics Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Statistics Batches": {
+      "main": [
+        [
+          {
+            "node": "YT - Statistics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YT - Statistics": {
+      "main": [
+        [
+          {
+            "node": "Normalize YouTube Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize YouTube Data": {
+      "main": [
+        [
+          {
+            "node": "Validate & Calculate YouTube Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Calculate YouTube Metrics": {
+      "main": [
+        [
+          {
+            "node": "Calculate YouTube Popularity Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate YouTube Popularity Score": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final YouTube Dataset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Final YouTube Dataset": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Export YouTube JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Export YouTube JSON": {
+      "main": [
+        [
+          {
+            "node": "Validate & Filter YouTube Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Filter YouTube Data": {
+      "main": [
+        [
+          {
+            "node": "Calculate Engagement Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Engagement Metrics": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate YouTube Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "b8767009-24b7-4496-8c56-cac5a270b94d",
+  "meta": {
+    "instanceId": "59f8ff0744b2ebbe1aaaebc0c009dc432dcb4669b505244ea466e81eb77843a5"
+  },
+  "nodeGroups": [],
+  "id": "3OhonsnRp8UQSUY9",
+  "tags": []
+}

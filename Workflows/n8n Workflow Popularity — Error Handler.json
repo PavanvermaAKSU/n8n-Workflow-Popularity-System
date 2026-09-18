@@ -1,0 +1,55 @@
+{
+  "name": "n8n Workflow Popularity — Error Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "e22bc28b-4d9f-434d-950b-e188d78d9585",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const error = $json;\n\nreturn [\n  {\n    json: {\n      status: \"workflow_error\",\n      workflow: error.workflow?.name || \"unknown\",\n      execution_id: error.execution?.id || null,\n      error_message:\n        error.execution?.error?.message ||\n        error.error?.message ||\n        \"Unknown workflow error\",\n      failed_at: new Date().toISOString()\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "43acd0a9-31c9-4240-a6f8-d155b3be3891",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "1efd752b-048c-4733-9c06-4d8b1e3758a8",
+  "meta": {
+    "instanceId": "59f8ff0744b2ebbe1aaaebc0c009dc432dcb4669b505244ea466e81eb77843a5"
+  },
+  "nodeGroups": [],
+  "id": "4zRnCEvqL7a2FfKJ",
+  "tags": []
+}
